@@ -1,0 +1,74 @@
+# Nome do nosso workflow, que aparecerá na aba "Actions" do GitHub
+name: Deploy do Site NGINX na EC2
+
+# Gatilho: Este workflow roda toda vez que houver um 'push' para a branch 'main'
+on:
+  push:
+    branches: [ "main" ]
+
+# Define os "trabalhos" (jobs) a serem executados
+jobs:
+  build-and-deploy:
+    name: Construir, Enviar e Implantar
+    # O job vai rodar em uma máquina virtual Linux gerenciada pelo GitHub
+    runs-on: ubuntu-latest
+
+    # Define os passos (steps) que o job executará em sequência
+    steps:
+    # Passo 1: Clona o código do seu repositório para a máquina virtual
+    - name: Checkout do código
+      uses: actions/checkout@v4
+
+    # Passo 2: Configura as credenciais da AWS na máquina virtual
+    - name: Configurar credenciais da AWS
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    # Passo 3: Faz o login no Amazon ECR (o registro de contêineres da AWS)
+    - name: Login no Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    # Passo 4: Constrói a imagem Docker e envia para o ECR
+    - name: Construir e enviar imagem para o ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        # Nome do repositório que criamos com o Terraform
+        ECR_REPOSITORY: meu-projeto-devops-repo
+        # Cria uma tag única para a imagem usando o ID do commit
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+    # Passo 5: Conecta na EC2 via SSH e executa os comandos de deploy
+    - name: Implantar na EC2
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
+        key: ${{ secrets.EC2_PRIVATE_KEY }}
+        script: |
+          # Instala o Docker se não estiver presente (garante que funcione)
+          sudo yum update -y
+          sudo yum install -y docker
+          sudo service docker start
+          sudo usermod -a -G docker ${{ secrets.EC2_USERNAME }}
+
+          # Loga a instância EC2 no ECR para poder baixar a imagem privada
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ steps.login-ecr.outputs.registry }}
+
+          # Para e remove o contêiner antigo, se ele estiver rodando (ignora erros caso não exista)
+          docker stop nginx-server || true
+          docker rm nginx-server || true
+
+          # Baixa a nova imagem do ECR que acabamos de enviar
+          docker pull ${{ steps.build-image.outputs.image }}
+
+          # Inicia um novo contêiner com a imagem atualizada, mapeando a porta 80
+          docker run -d --name nginx-server -p 80:80 ${{ steps.build-image.outputs.image }}

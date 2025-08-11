@@ -1,0 +1,28 @@
+# Arquivos de estado locais do Terraform
+*.tfstate
+*.tfstate.*
+
+# Arquivos de log de crash
+crash.log
+crash.*.log
+
+# Arquivos excluídos pelo 'terraform plan'
+*.tfplan
+
+# Arquivos de variáveis que não devem ser versionados
+*.tfvars
+*.tfvars.json
+
+# Informações de override
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Configurações de CLI
+.terraformrc
+terraform.rc
+
+# Arquivos e diretórios do Terraform
+.terraform/
+.terraform.lock.hcl
